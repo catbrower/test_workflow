@@ -1,0 +1,53 @@
+apiVersion: jobflow.dev/v1alpha1
+kind: Workflow
+metadata:
+  name: hello-world
+  description: "Minimal hello world workflow"
+
+spec:
+  source:
+    repoUrl: "http://git.local/scm/platform/hello-world.git"
+    ref: "main"
+    commitSha: null
+
+  defaults:
+    runtime:
+      language: python
+      entrypoint: "main.py:main"
+      pythonVersion: "3.11"
+    kubernetes:
+      image: "ghcr.io/your-org/jobflow-runner:py-3.11"
+      serviceAccountName: "jobflow-runner"
+      resources:
+        requests: { cpu: "100m", memory: "128Mi" }
+        limits:   { cpu: "250m", memory: "256Mi" }
+      retry:
+        maxAttempts: 1
+      timeoutSeconds: 300
+    io:
+      redis:
+        namespace: "wf"
+        payloadFormat: "json"
+        maxlenApprox: 1000
+      mongodb:
+        recordEverything: true
+
+  params:
+    name:
+      type: string
+      default: "World"
+
+  nodes:
+    - id: hello
+      worker:
+        path: "workers/hello"
+      inputs:
+        params:
+          name: "${{ params.name }}"
+      outputs:
+        streams:
+          greeting: "hello.out"
+
+  streams:
+    events: "events"
+    logs: "logs"
