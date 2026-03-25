@@ -1,53 +1,57 @@
-apiVersion: jobflow.dev/v1alpha1
-kind: Workflow
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: hello-world
-  description: "Minimal hello world workflow"
+  name: test-workflow-{{DEPLOYMENT_ID}}
+  namespace: swarmopt
+data:
+  main.py: |
+    import os
 
+    import redis
+
+
+    def main():
+        deployment_id = os.environ["DEPLOYMENT_ID"]
+        redis_host = os.environ.get("REDIS_HOST", "redis.swarmopt.svc.cluster.local")
+        redis_port = int(os.environ.get("REDIS_PORT", 6379))
+        stream = f"test_workflow_{deployment_id}"
+
+        r = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
+        r.xadd(stream, {"message": "hello_world"})
+        print(f"wrote hello_world to {stream}")
+
+
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: test-workflow-{{DEPLOYMENT_ID}}
+  namespace: swarmopt
 spec:
-  source:
-    repoUrl: "http://git.local/scm/platform/hello-world.git"
-    ref: "main"
-    commitSha: null
-
-  defaults:
-    runtime:
-      language: python
-      entrypoint: "main.py:main"
-      pythonVersion: "3.11"
-    kubernetes:
-      image: "ghcr.io/your-org/jobflow-runner:py-3.11"
-      serviceAccountName: "jobflow-runner"
-      resources:
-        requests: { cpu: "100m", memory: "128Mi" }
-        limits:   { cpu: "250m", memory: "256Mi" }
-      retry:
-        maxAttempts: 1
-      timeoutSeconds: 300
-    io:
-      redis:
-        namespace: "swarmopt"
-        payloadFormat: "json"
-        maxlenApprox: 1000
-      mongodb:
-        recordEverything: true
-
-  params:
-    name:
-      type: string
-      default: "World"
-
-  nodes:
-    - id: hello
-      worker:
-        path: "workers/hello"
-      inputs:
-        params:
-          name: "${{ params.name }}"
-      outputs:
-        streams:
-          greeting: "hello.out"
-
-  streams:
-    events: "events"
-    logs: "logs"
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: hello
+          image: python:3.12-slim
+          command:
+            - sh
+            - -c
+            - pip install redis --quiet && python /scripts/main.py
+          env:
+            - name: DEPLOYMENT_ID
+              value: "{{DEPLOYMENT_ID}}"
+            - name: REDIS_HOST
+              value: "redis.swarmopt.svc.cluster.local"
+            - name: REDIS_PORT
+              value: "6379"
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: test-workflow-{{DEPLOYMENT_ID}}
