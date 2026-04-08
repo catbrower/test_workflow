@@ -1,7 +1,7 @@
 [[source]]
-url = "https://pypi.org/simple"
-verify_ssl = true
-name = "pypi"
+url = "http://192.168.1.2:30082/artifactory/api/pypi/pypi-virtual/simple"
+verify_ssl = false
+name = "artifactory"
 
 [packages]
 

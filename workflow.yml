@@ -3,27 +3,7 @@ kind: ConfigMap
 metadata:
   name: test-workflow-{{DEPLOYMENT_ID}}
   namespace: swarmopt
-data:
-  main.py: |
-    import os
-
-    import redis
-
-
-    def main():
-        deployment_id = os.environ["DEPLOYMENT_ID"]
-        redis_host = os.environ.get("REDIS_HOST", "redis.swarmopt.svc.cluster.local")
-        redis_port = int(os.environ.get("REDIS_PORT", 6379))
-        stream = f"test_workflow_{deployment_id}"
-
-        r = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
-        r.xadd(stream, {"message": "hello_world"})
-        print(f"wrote hello_world to {stream}")
-
-
-    if __name__ == "__main__":
-        main()
----
+  
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -41,17 +21,3 @@ spec:
             - sh
             - -c
             - pip install redis --quiet && python /scripts/main.py
-          env:
-            - name: DEPLOYMENT_ID
-              value: "{{DEPLOYMENT_ID}}"
-            - name: REDIS_HOST
-              value: "redis.swarmopt.svc.cluster.local"
-            - name: REDIS_PORT
-              value: "6379"
-          volumeMounts:
-            - name: script
-              mountPath: /scripts
-      volumes:
-        - name: script
-          configMap:
-            name: test-workflow-{{DEPLOYMENT_ID}}
