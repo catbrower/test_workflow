@@ -1,5 +1,5 @@
 [[source]]
-url = "http://192.168.1.2:30082/artifactory/api/pypi/pypi-virtual/simple"
+url = "https://artifactory.catbrower.com:9443/artifactory/api/pypi/pypi-virtual/simple"
 verify_ssl = false
 name = "artifactory"
 

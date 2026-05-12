@@ -15,9 +15,12 @@ spec:
     spec:
       restartPolicy: Never
       containers:
-        - name: hello
-          image: python:3.12-slim
-          command:
-            - sh
-            - -c
-            - pip install redis --quiet && python /scripts/main.py
+        - name: flow-function
+          image: flow-function-runner:latest
+          env:
+            - name: WORK_ITEM
+              value: "{{WORK_ITEM}}"
+            - name: REDIS_HOST
+              value: redis.swarmopt.svc.cluster.local
+            - name: REDIS_PORT
+              value: "6379"
