@@ -3,6 +3,8 @@ import uuid
 import redis
 import docker
 
+import swarm_sdk
+
 REDIS_HOST = "localhost"
 REDIS_PORT = 6379
 WORKFLOW_NAME = "montecarlo"

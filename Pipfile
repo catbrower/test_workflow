@@ -5,9 +5,9 @@ name = "pypi"
 
 [packages]
 docker = "*"
-workflow_montecarlo = {file = "functions/montecarlo"}
-workflow_common = {file = "common"}
 kubernetes = "*"
+common = "*"
+swarm-sdk = {editable = true, path = "../swarmopt-sdk-python"}
 
 [dev-packages]
 

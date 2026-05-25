@@ -4,6 +4,10 @@ set -euo pipefail
 INFRA_NS="swarmopt"
 REDIS_PORT="6379"        # port Redis listens on inside the cluster (also used locally via port-forward)
 
+echo "==> Generating types..."
+pipenv run generate-types
+
+echo ""
 echo "==> Building workflow images..."
 docker build -t workflow-main:latest       -f functions/main/Dockerfile       .
 docker build -t workflow-montecarlo:latest -f functions/montecarlo/Dockerfile .
@@ -63,7 +67,7 @@ EOF
 
 echo ""
 echo "==> Writing args: $REDIS_KEY"
-redis-cli -p "$REDIS_PORT" SET "$REDIS_KEY" '{"n": 50000, "population_size": 10, "generations": 10}'
+redis-cli -p "$REDIS_PORT" SET "$REDIS_KEY" '{"n": 1000000, "population_size": 10, "generations": 10}'
 
 echo ""
 echo "==> Subscribing to $RESULT_STREAM"

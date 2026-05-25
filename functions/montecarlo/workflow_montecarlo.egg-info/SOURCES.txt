@@ -1,9 +1,0 @@
-pyproject.toml
-src/__init__.py
-src/main.py
-workflow_montecarlo.egg-info/PKG-INFO
-workflow_montecarlo.egg-info/SOURCES.txt
-workflow_montecarlo.egg-info/dependency_links.txt
-workflow_montecarlo.egg-info/entry_points.txt
-workflow_montecarlo.egg-info/requires.txt
-workflow_montecarlo.egg-info/top_level.txt

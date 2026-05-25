@@ -12,6 +12,10 @@ def _log(msg: str) -> None:
     print(f"[montecarlo] {msg}", file=sys.stderr, flush=True)
 
 
+class MontecarloRequest(BaseModel):
+    n: int = 1000
+
+
 class MontecarloResult(BaseModel):
     inside: int
     total: int
@@ -20,16 +24,16 @@ class MontecarloResult(BaseModel):
 
 
 @function
-class Montecarlo(WorkflowFunction[MontecarloResult]):
-    def main(self, n: int = 1000) -> Iterator[MontecarloResult]:
-        _log(f"computing with n={n}")
+class Montecarlo(WorkflowFunction):
+    def main(self, request: MontecarloRequest) -> Iterator[MontecarloResult]:
+        _log(f"computing with n={request.n}")
         inside = sum(
-            1 for _ in range(n)
+            1 for _ in range(request.n)
             if random.random() ** 2 + random.random() ** 2 <= 1.0
         )
-        ratio = inside / n
+        ratio = inside / request.n
         _log(f"done: inside={inside} ratio={ratio:.4f} pi_estimate={4 * ratio:.4f}")
-        yield MontecarloResult(inside=inside, total=n, ratio=ratio, pi_estimate=4 * ratio)
+        yield MontecarloResult(inside=inside, total=request.n, ratio=ratio, pi_estimate=4 * ratio)
 
     def run(self) -> None:
         _log("starting")

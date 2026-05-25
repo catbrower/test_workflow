@@ -1,5 +1,5 @@
 [project]
-name = "test_workflow_main"
+name = "workflow_main"
 version = "0.1.0"
 description = "test workflow main function"
 authors = [{name = "Catherine"}]
