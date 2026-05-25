@@ -6,7 +6,7 @@ authors = [{name = "Catherine"}]
 
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["redis", "docker", "pydantic"]
+dependencies = ["redis", "kubernetes", "pydantic"]
 
 [project.optional-dependencies]
 dev = [ ]

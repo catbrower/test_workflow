@@ -1,0 +1,32 @@
+# Shared RBAC for all workflow functions that need to spawn child jobs.
+# Apply once per cluster: kubectl apply -f k8s/rbac.yaml
+# All workflow Job pods reference serviceAccountName: workflow-runner.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: workflow-runner
+  namespace: swarmopt
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: workflow-job-creator
+  namespace: swarmopt
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: workflow-runner-jobs
+  namespace: swarmopt
+subjects:
+  - kind: ServiceAccount
+    name: workflow-runner
+    namespace: swarmopt
+roleRef:
+  kind: Role
+  name: workflow-job-creator
+  apiGroup: rbac.authorization.k8s.io

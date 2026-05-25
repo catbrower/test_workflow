@@ -5,11 +5,14 @@ import sys
 
 import redis as redis_lib
 
-from constants import DELETE_ARGS_KEYS, TTL
+from constants import DELETE_ARGS_KEYS, IMAGE_PULL_POLICY, NAMESPACE as _NAMESPACE_DEFAULT, REDIS_HOST_DEFAULT, SERVICE_ACCOUNT, TTL
+
+NAMESPACE = os.environ.get("WORKFLOW_NAMESPACE", _NAMESPACE_DEFAULT)
 from decorators import function  # noqa: F401 — re-exported for convenience
 from keys import RedisKeys
 
 _redis_client = None
+_k8s_client = None
 
 
 def _log(tag: str, msg: str) -> None:
@@ -19,7 +22,7 @@ def _log(tag: str, msg: str) -> None:
 def _redis():
     global _redis_client
     if _redis_client is None:
-        host = os.environ.get("REDIS_HOST", "localhost")
+        host = os.environ.get("REDIS_HOST", REDIS_HOST_DEFAULT)
         port = int(os.environ.get("REDIS_PORT", "6379"))
         _redis_client = redis_lib.Redis(host=host, port=port, decode_responses=True)
     return _redis_client
@@ -27,6 +30,84 @@ def _redis():
 
 def _workflow_name() -> str:
     return os.environ.get("WORKFLOW_NAME", "workflow")
+
+
+def _ensure_k8s():
+    global _k8s_client
+    if _k8s_client is None:
+        from kubernetes import config as k8s_config, client as k8s
+
+        _TOKEN_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        _CA_FILE = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+        cfg = k8s.Configuration()
+        token = None
+
+        if os.path.exists(_TOKEN_FILE):
+            # In-cluster: configure manually because k8s Python client v28+ returns
+            # an empty auth_settings() dict, so api_key is never applied to requests.
+            with open(_TOKEN_FILE) as f:
+                token = f.read().strip()
+            cfg.host = f"https://{os.environ['KUBERNETES_SERVICE_HOST']}:{os.environ['KUBERNETES_SERVICE_PORT']}"
+            cfg.ssl_ca_cert = _CA_FILE
+            _log("k8s", f"in-cluster config: host={cfg.host}, token_len={len(token)}")
+        else:
+            k8s_config.load_kube_config(client_configuration=cfg)
+            _log("k8s", "loaded kube config")
+
+        api_client = k8s.ApiClient(configuration=cfg)
+        if token:
+            api_client.set_default_header("Authorization", f"Bearer {token}")
+        _k8s_client = api_client
+    return _k8s_client
+
+
+def _delete_job(name: str, instance_id: str) -> None:
+    from kubernetes import client as k8s
+    api_client = _ensure_k8s()
+    job_name = f"workflow-{name}-{instance_id}"
+    try:
+        k8s.BatchV1Api(api_client).delete_namespaced_job(
+            name=job_name,
+            namespace=NAMESPACE,
+            body=k8s.V1DeleteOptions(propagation_policy="Background"),
+        )
+        _log(f"delete:{name}", f"deleted job {job_name}")
+    except Exception as e:
+        _log(f"delete:{name}", f"could not delete {job_name}: {e}")
+
+
+def _spawn_job(name: str, args_key: str, env_vars: dict) -> None:
+    from kubernetes import client as k8s
+    api_client = _ensure_k8s()
+
+    instance_id = env_vars["INSTANCE_ID"]
+    job_name = f"workflow-{name}-{instance_id}"
+
+    job = k8s.V1Job(
+        metadata=k8s.V1ObjectMeta(name=job_name, namespace=NAMESPACE),
+        spec=k8s.V1JobSpec(
+            ttl_seconds_after_finished=TTL,
+            backoff_limit=0,
+            template=k8s.V1PodTemplateSpec(
+                spec=k8s.V1PodSpec(
+                    restart_policy="Never",
+                    service_account_name=SERVICE_ACCOUNT,
+                    containers=[
+                        k8s.V1Container(
+                            name=name,
+                            image=f"workflow-{name}:latest",
+                            image_pull_policy=IMAGE_PULL_POLICY,
+                            args=[args_key],
+                            env=[k8s.V1EnvVar(name=k, value=v) for k, v in env_vars.items()],
+                        )
+                    ],
+                )
+            ),
+        ),
+    )
+    k8s.BatchV1Api(api_client).create_namespaced_job(namespace=NAMESPACE, body=job)
+    _log(f"spawn:{name}", f"created job {job_name}")
 
 
 def build_work_item_descriptor(fn) -> dict:
@@ -68,7 +149,6 @@ def write_result(result: dict) -> None:
 
 def flux(name: str, count: int, **kwargs) -> list:
     from uuid import uuid4
-    import docker
 
     r = _redis()
     workflow_id = os.environ["WORKFLOW_ID"]
@@ -77,31 +157,19 @@ def flux(name: str, count: int, **kwargs) -> list:
     group_id = str(uuid4())
     group_stream = RedisKeys.group_result(workflow, group_id)
 
-    try:
-        client = docker.from_env()
-        for _ in range(count):
-            call_instance_id = str(uuid4())
-            args_key = RedisKeys.args(workflow, name, call_instance_id)
-            r.set(args_key, json.dumps(kwargs), ex=TTL)
-            container = client.containers.run(
-                f"workflow-{name}",
-                command=[args_key],
-                environment={
-                    "REDIS_HOST": os.environ.get("REDIS_HOST", "localhost"),
-                    "REDIS_PORT": os.environ.get("REDIS_PORT", "6379"),
-                    "WORKFLOW_NAME": workflow,
-                    "INSTANCE_ID": call_instance_id,
-                    "WORKFLOW_ID": workflow_id,
-                    "GROUP_ID": group_id,
-                },
-                detach=True,
-                auto_remove=True,
-                network_mode="host",
-            )
-            _log(f"flux:{name}", f"container started: {container.short_id}")
-    except Exception as e:
-        _log(f"flux:{name}", f"ERROR spawning containers: {e}")
-        raise
+    for _ in range(count):
+        call_instance_id = str(uuid4())
+        args_key = RedisKeys.args(workflow, name, call_instance_id)
+        r.set(args_key, json.dumps(kwargs), ex=TTL)
+        _spawn_job(name, args_key, {
+            "REDIS_HOST": os.environ.get("REDIS_HOST", REDIS_HOST_DEFAULT),
+            "REDIS_PORT": os.environ.get("REDIS_PORT", "6379"),
+            "WORKFLOW_NAMESPACE": NAMESPACE,
+            "WORKFLOW_NAME": workflow,
+            "INSTANCE_ID": call_instance_id,
+            "WORKFLOW_ID": workflow_id,
+            "GROUP_ID": group_id,
+        })
 
     results = []
     completed = 0
@@ -116,13 +184,19 @@ def flux(name: str, count: int, **kwargs) -> list:
                 last_id = msg_id
                 entry = json.loads(fields["data"])
                 outcome = entry.get("outcome")
+                instance_id = entry.get("instance_id")
                 if outcome == "COMPLETE":
                     completed += 1
+                    _delete_job(name, instance_id)
                     _log(f"flux:{name}", f"worker complete ({completed}/{count})")
                 elif outcome == "SUCCESS":
                     results.append({v["name"]: v["value"] for v in entry.get("values") or []})
                 elif outcome == "FAILURE":
+                    _delete_job(name, instance_id)
                     raise RuntimeError(f"worker '{name}' failed: {entry.get('error')}")
+                elif outcome == "TERMINATED":
+                    _delete_job(name, instance_id)
+                    raise RuntimeError(f"worker '{name}' was terminated")
 
     r.delete(group_stream)
     _log(f"flux:{name}", f"deleted group stream {group_stream}")
@@ -131,7 +205,6 @@ def flux(name: str, count: int, **kwargs) -> list:
 
 def mono(name: str, **kwargs) -> dict:
     from uuid import uuid4
-    import docker
 
     r = _redis()
     workflow_id = os.environ["WORKFLOW_ID"]
@@ -142,39 +215,27 @@ def mono(name: str, **kwargs) -> dict:
     result_stream = RedisKeys.result(workflow, call_instance_id)
 
     r.set(args_key, json.dumps(kwargs), ex=TTL)
-    _log(f"call:{name}", f"args -> {args_key}")
-
-    try:
-        client = docker.from_env()
-        container = client.containers.run(
-            f"workflow-{name}",
-            command=[args_key],
-            environment={
-                "REDIS_HOST": os.environ.get("REDIS_HOST", "localhost"),
-                "REDIS_PORT": os.environ.get("REDIS_PORT", "6379"),
-                "WORKFLOW_NAME": workflow,
-                "INSTANCE_ID": call_instance_id,
-                "WORKFLOW_ID": workflow_id,
-            },
-            detach=True,
-            auto_remove=True,
-            network_mode="host",
-        )
-        _log(f"call:{name}", f"container started: {container.short_id}")
-    except Exception as e:
-        _log(f"call:{name}", f"ERROR spawning container: {e}")
-        raise
+    _spawn_job(name, args_key, {
+        "REDIS_HOST": os.environ.get("REDIS_HOST", REDIS_HOST_DEFAULT),
+        "REDIS_PORT": os.environ.get("REDIS_PORT", "6379"),
+        "WORKFLOW_NAMESPACE": NAMESPACE,
+        "WORKFLOW_NAME": workflow,
+        "INSTANCE_ID": call_instance_id,
+        "WORKFLOW_ID": workflow_id,
+    })
+    _log(f"mono:{name}", f"args -> {args_key}")
 
     raw = r.xread({result_stream: "0-0"}, count=1, block=TTL * 1000)
     if not raw:
+        _delete_job(name, call_instance_id)
         raise TimeoutError(f"worker '{name}' timed out after {TTL}s")
 
     entry = json.loads(raw[0][1][0][1]["data"])
-    if entry.get("outcome") != "SUCCESS":
-        raise RuntimeError(
-            f"worker '{name}' returned {entry.get('outcome')}: {entry.get('error')}"
-        )
-    flat = {v["name"]: v["value"] for v in entry.get("values") or []}
+    outcome = entry.get("outcome")
+    _delete_job(name, call_instance_id)
     r.delete(result_stream)
-    _log(f"call:{name}", f"deleted result stream {result_stream}")
+    _log(f"mono:{name}", f"deleted result stream {result_stream}")
+    if outcome != "SUCCESS":
+        raise RuntimeError(f"worker '{name}' returned {outcome}: {entry.get('error')}")
+    flat = {v["name"]: v["value"] for v in entry.get("values") or []}
     return flat
