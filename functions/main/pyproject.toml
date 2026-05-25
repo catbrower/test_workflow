@@ -1,0 +1,25 @@
+[project]
+name = "test_workflow_main"
+version = "0.1.0"
+description = "test workflow main function"
+authors = [{name = "Catherine"}]
+
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["redis", "docker"]
+
+[project.scripts]
+run = "workflow_main.main:run"
+
+[project.optional-dependencies]
+dev = [ ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"workflow_main" = "src"}

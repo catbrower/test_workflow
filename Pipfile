@@ -1,9 +1,12 @@
 [[source]]
-url = "https://artifactory.catbrower.com:9443/artifactory/api/pypi/pypi-virtual/simple"
-verify_ssl = false
-name = "artifactory"
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
 
 [packages]
+docker = "*"
+workflow_montecarlo = {file = "functions/montecarlo"}
+workflow_common = {file = "common"}
 
 [dev-packages]
 
