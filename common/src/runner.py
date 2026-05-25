@@ -1,42 +1,39 @@
-"""
-Worker entrypoint. Pops one task from TASK_QUEUE, calls main(**inputs),
-pushes the result dict to workflow:results:{call_id}, then exits.
-"""
 import json
 import os
 import sys
 
-sys.path.insert(0, "/app/src")
+import main  # noqa: F401 — side effect: registers @function class
+from constants import TTL
+from decorators import FunctionRegistry
+from keys import RedisKeys
 
-import redis as redis_lib
 
+def _write_descriptor() -> None:
+    descriptor_path = "/app/descriptor.json"
+    try:
+        with open(descriptor_path) as f:
+            descriptor = json.load(f)
+    except FileNotFoundError:
+        print(f"[runner] no descriptor.json at {descriptor_path}, skipping", file=sys.stderr, flush=True)
+        return
 
-def run() -> None:
+    descriptor["instanceId"] = os.environ.get("INSTANCE_ID", "")
+    descriptor["workflowId"] = os.environ.get("WORKFLOW_ID", "")
+    descriptor["workflowName"] = os.environ.get("WORKFLOW_NAME", "workflow")
+
+    instance_name = descriptor.get("instanceName", "unknown")
+    workflow_name = descriptor["workflowName"]
+    workflow_id = descriptor["workflowId"]
+    hash_key = RedisKeys.descriptor(workflow_name, workflow_id)
+
+    import redis as redis_lib
     host = os.environ.get("REDIS_HOST", "localhost")
     port = int(os.environ.get("REDIS_PORT", "6379"))
-    task_queue = os.environ.get("TASK_QUEUE")
-
-    if not task_queue:
-        print("TASK_QUEUE env var is required", file=sys.stderr)
-        sys.exit(1)
-
     r = redis_lib.Redis(host=host, port=port, decode_responses=True)
-
-    result = r.blpop(task_queue, timeout=60)
-    if result is None:
-        print(f"timed out waiting on {task_queue}", file=sys.stderr)
-        sys.exit(1)
-
-    _, raw = result
-    task = json.loads(raw)
-    call_id = task["call_id"]
-    inputs = task["inputs"]
-
-    from main import main
-    output = main(**inputs)
-
-    r.rpush(f"workflow:results:{call_id}", json.dumps(output))
+    r.hset(hash_key, instance_name, json.dumps(descriptor))
+    r.expire(hash_key, TTL)
+    print(f"[runner] wrote descriptor to {hash_key}[{instance_name}]", file=sys.stderr, flush=True)
 
 
-if __name__ == "__main__":
-    run()
+_write_descriptor()
+FunctionRegistry.main_function().run()

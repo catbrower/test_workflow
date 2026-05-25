@@ -2,13 +2,14 @@ import inspect
 import json
 import os
 import sys
-import time
 
 import redis as redis_lib
 
-_redis_client = None
+from constants import DELETE_ARGS_KEYS, TTL
+from decorators import function  # noqa: F401 — re-exported for convenience
+from keys import RedisKeys
 
-DELETE_ARGS_KEYS = False
+_redis_client = None
 
 
 def _log(tag: str, msg: str) -> None:
@@ -28,14 +29,11 @@ def _workflow_name() -> str:
     return os.environ.get("WORKFLOW_NAME", "workflow")
 
 
-def function(fn):
-    fn.__workflow_function__ = True
-    return fn
-
-
 def build_work_item_descriptor(fn) -> dict:
     inputs = []
     for name, param in inspect.signature(fn).parameters.items():
+        if name == "self":
+            continue
         entry = {"name": name}
         if param.annotation != inspect.Parameter.empty:
             entry["type"] = param.annotation.__name__
@@ -56,31 +54,96 @@ def read_args(key: str) -> dict:
 
 
 def write_result(result: dict) -> None:
-    instance_id = os.environ["INSTANCE_ID"]
-    workflow = _workflow_name()
-    result_stream = f"{workflow}-return-{instance_id}"
-    _redis().xadd(result_stream, {"data": json.dumps(result)})
-    _log("write_result", f"wrote to stream {result_stream}")
-
-
-def call(name: str, **kwargs) -> dict:
     r = _redis()
-    instance_id = os.environ["INSTANCE_ID"]
+    workflow = _workflow_name()
+    group_id = os.environ.get("GROUP_ID")
+    if group_id:
+        stream = RedisKeys.group_result(workflow, group_id)
+    else:
+        stream = RedisKeys.result(workflow, os.environ["INSTANCE_ID"])
+    r.xadd(stream, {"data": json.dumps(result)})
+    r.expire(stream, TTL)
+    _log("write_result", f"wrote to stream {stream}")
+
+
+def flux(name: str, count: int, **kwargs) -> list:
+    from uuid import uuid4
+    import docker
+
+    r = _redis()
     workflow_id = os.environ["WORKFLOW_ID"]
     workflow = _workflow_name()
-    args_key = f"{workflow}-{name}-{instance_id}"
-    result_stream = f"{workflow}-return-{instance_id}"
 
-    # Reuse existing result on retry
-    existing = r.xread({result_stream: "0-0"}, count=1)
-    if existing:
-        _log(f"call:{name}", f"found existing result on {result_stream}, reusing")
-        return json.loads(existing[0][1][0][1]["data"])
+    group_id = str(uuid4())
+    group_stream = RedisKeys.group_result(workflow, group_id)
 
-    r.set(args_key, json.dumps(kwargs))
-    _log(f"call:{name}", f"wrote args to {args_key}")
+    try:
+        client = docker.from_env()
+        for _ in range(count):
+            call_instance_id = str(uuid4())
+            args_key = RedisKeys.args(workflow, name, call_instance_id)
+            r.set(args_key, json.dumps(kwargs), ex=TTL)
+            container = client.containers.run(
+                f"workflow-{name}",
+                command=[args_key],
+                environment={
+                    "REDIS_HOST": os.environ.get("REDIS_HOST", "localhost"),
+                    "REDIS_PORT": os.environ.get("REDIS_PORT", "6379"),
+                    "WORKFLOW_NAME": workflow,
+                    "INSTANCE_ID": call_instance_id,
+                    "WORKFLOW_ID": workflow_id,
+                    "GROUP_ID": group_id,
+                },
+                detach=True,
+                auto_remove=True,
+                network_mode="host",
+            )
+            _log(f"flux:{name}", f"container started: {container.short_id}")
+    except Exception as e:
+        _log(f"flux:{name}", f"ERROR spawning containers: {e}")
+        raise
 
+    results = []
+    completed = 0
+    last_id = "0-0"
+
+    while completed < count:
+        raw = r.xread({group_stream: last_id}, count=10, block=TTL * 1000)
+        if not raw:
+            raise TimeoutError(f"flux '{name}' timed out after {TTL}s ({completed}/{count} complete)")
+        for _, messages in raw:
+            for msg_id, fields in messages:
+                last_id = msg_id
+                entry = json.loads(fields["data"])
+                outcome = entry.get("outcome")
+                if outcome == "COMPLETE":
+                    completed += 1
+                    _log(f"flux:{name}", f"worker complete ({completed}/{count})")
+                elif outcome == "SUCCESS":
+                    results.append({v["name"]: v["value"] for v in entry.get("values") or []})
+                elif outcome == "FAILURE":
+                    raise RuntimeError(f"worker '{name}' failed: {entry.get('error')}")
+
+    r.delete(group_stream)
+    _log(f"flux:{name}", f"deleted group stream {group_stream}")
+    return results
+
+
+def mono(name: str, **kwargs) -> dict:
+    from uuid import uuid4
     import docker
+
+    r = _redis()
+    workflow_id = os.environ["WORKFLOW_ID"]
+    workflow = _workflow_name()
+
+    call_instance_id = str(uuid4())
+    args_key = RedisKeys.args(workflow, name, call_instance_id)
+    result_stream = RedisKeys.result(workflow, call_instance_id)
+
+    r.set(args_key, json.dumps(kwargs), ex=TTL)
+    _log(f"call:{name}", f"args -> {args_key}")
+
     try:
         client = docker.from_env()
         container = client.containers.run(
@@ -90,7 +153,7 @@ def call(name: str, **kwargs) -> dict:
                 "REDIS_HOST": os.environ.get("REDIS_HOST", "localhost"),
                 "REDIS_PORT": os.environ.get("REDIS_PORT", "6379"),
                 "WORKFLOW_NAME": workflow,
-                "INSTANCE_ID": instance_id,
+                "INSTANCE_ID": call_instance_id,
                 "WORKFLOW_ID": workflow_id,
             },
             detach=True,
@@ -102,13 +165,16 @@ def call(name: str, **kwargs) -> dict:
         _log(f"call:{name}", f"ERROR spawning container: {e}")
         raise
 
-    start = time.time()
-    while True:
-        result = r.xread({result_stream: "0-0"}, count=1, block=5000)
-        if result:
-            _log(f"call:{name}", "received result")
-            return json.loads(result[0][1][0][1]["data"])
-        elapsed = time.time() - start
-        _log(f"call:{name}", f"waiting for result... ({elapsed:.0f}s)")
-        if elapsed > 60:
-            raise TimeoutError(f"worker '{name}' timed out after 60s")
+    raw = r.xread({result_stream: "0-0"}, count=1, block=TTL * 1000)
+    if not raw:
+        raise TimeoutError(f"worker '{name}' timed out after {TTL}s")
+
+    entry = json.loads(raw[0][1][0][1]["data"])
+    if entry.get("outcome") != "SUCCESS":
+        raise RuntimeError(
+            f"worker '{name}' returned {entry.get('outcome')}: {entry.get('error')}"
+        )
+    flat = {v["name"]: v["value"] for v in entry.get("values") or []}
+    r.delete(result_stream)
+    _log(f"call:{name}", f"deleted result stream {result_stream}")
+    return flat

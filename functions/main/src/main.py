@@ -1,25 +1,20 @@
-import json
-import sys
+from typing import Iterator
 
-from workflow import build_work_item_descriptor, call, function, read_args
+from pydantic import BaseModel
+
+from models import WorkflowFunction
+from workflow import flux, function
+
+
+class WorkFlowResult(BaseModel):
+    generation: int
+    pi: float
 
 
 @function
-def main(n: int = 10, generations: int = 10) -> dict:
-    result = call("montecarlo", n=n)
-    return {"n": n, "generations": generations, "worker_result": result}
-
-
-def run():
-    if len(sys.argv) < 2:
-        print("usage: run <redis-key>", file=sys.stderr)
-        sys.exit(1)
-
-    key = sys.argv[1]
-
-    desc = build_work_item_descriptor(main)
-    print(json.dumps(desc, indent=2), file=sys.stderr)
-
-    args = read_args(key)
-    result = main(**args)
-    print(json.dumps(result, indent=2))
+class Main(WorkflowFunction[WorkFlowResult]):
+    def main(self, n: int = 10, population_size: int = 5, generations: int = 10) -> Iterator[WorkFlowResult]:
+        for i in range(generations):
+            results = flux("montecarlo", count=population_size, n=n)
+            avg_pi = sum(r["pi_estimate"] for r in results) / len(results)
+            yield WorkFlowResult(generation=i, pi=avg_pi)

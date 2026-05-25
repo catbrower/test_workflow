@@ -6,10 +6,7 @@ authors = [{name = "Catherine"}]
 
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["redis", "docker"]
-
-[project.scripts]
-run = "workflow_main.main:run"
+dependencies = ["redis", "docker", "pydantic"]
 
 [project.optional-dependencies]
 dev = [ ]
