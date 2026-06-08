@@ -317,13 +317,6 @@
             "markers": "python_version >= '3.7'",
             "version": "==3.4.7"
         },
-        "common": {
-            "hashes": [
-                "sha256:3dfa982670abefc870043b239eaa0ecd860be7aa952b1931c1356b426ff8c76a"
-            ],
-            "index": "pypi",
-            "version": "==0.1.2"
-        },
         "docker": {
             "hashes": [
                 "sha256:ad8c70e6e3f8926cb8a92619b832b4ea5299e2831c14284663184e200546fa6c",
@@ -1035,7 +1028,7 @@
         },
         "swarm-sdk": {
             "editable": true,
-            "path": "../swarmopt-sdk-python"
+            "path": "../swarm-sdk-python"
         },
         "typing-extensions": {
             "hashes": [

@@ -5,12 +5,12 @@ INFRA_NS="swarmopt"
 REDIS_PORT="6379"        # port Redis listens on inside the cluster (also used locally via port-forward)
 
 echo "==> Generating types..."
-pipenv run generate-types
+pipenv run python -m swarm_sdk.generate_types
 
 echo ""
 echo "==> Building workflow images..."
-docker build -t workflow-main:latest       -f functions/main/Dockerfile       .
-docker build -t workflow-montecarlo:latest -f functions/montecarlo/Dockerfile .
+docker build -t workflow-main:latest       --network=host -f functions/main/Dockerfile       ..
+docker build -t workflow-montecarlo:latest --network=host -f functions/montecarlo/Dockerfile ..
 
 echo ""
 echo "==> Loading images into minikube..."

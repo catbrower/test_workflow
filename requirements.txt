@@ -1,0 +1,31 @@
+aiohappyeyeballs==2.6.2
+aiohttp==3.13.5
+aiosignal==1.4.0
+annotated-types==0.7.0
+attrs==26.1.0
+certifi==2026.5.20
+charset-normalizer==3.4.7
+docker==7.1.0
+durationpy==0.10
+frozenlist==1.8.0
+idna==3.16
+kubernetes==36.0.0
+multidict==6.7.1
+oauthlib==3.3.1
+propcache==0.5.2
+pydantic==2.13.4
+pydantic_core==2.46.4
+python-dateutil==2.9.0.post0
+PyYAML==6.0.3
+redis==7.4.0
+requests==2.34.2
+requests-oauthlib==2.0.0
+six==1.17.0
+# Editable install with no version control (swarm_sdk==0.1.0)
+-e /home/catherine/workspace/swarmopt/swarm-sdk-python
+typing-inspection==0.4.2
+typing_extensions==4.15.0
+urllib3==2.7.0
+websocket-client==1.9.0
+websockets==16.0
+yarl==1.24.2
