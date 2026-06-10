@@ -1,3 +1,29 @@
-name: montecarlo
-description: Estimate the value of Pi using Monte Carlo simulation
-version: 0.1.0
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hello-config-{{DEPLOYMENT_ID}}
+  namespace: swarmopt
+data:
+  DEPLOYMENT_ID: "{{DEPLOYMENT_ID}}"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hello-{{DEPLOYMENT_ID}}
+  namespace: swarmopt
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 0
+  template:
+    spec:
+      serviceAccountName: workflow-runner
+      restartPolicy: Never
+      containers:
+        - name: main
+          image: artifactory.catbrower.com/docker-local/workflow-hello:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DEPLOYMENT_ID
+              value: "{{DEPLOYMENT_ID}}"
+            - name: REDIS_HOST
+              value: redis.swarmopt.svc.cluster.local
